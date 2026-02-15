@@ -4,63 +4,89 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:TestExample.Views"
+        xmlns:cc="clr-namespace:TestExample.Converter"
         mc:Ignorable="d"
         Title="MainWindow" Height="450" Width="800">
     <Window.Resources>
+        <cc:InverseBooleanConverter x:Key="InverseBooleanConverter"/>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
         <Style TargetType="TabControl">
             <Setter Property="FontSize" Value="14"/>
         </Style>
         <Style TargetType="TextBox">
-            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="MaxWidth" Value="300" />
+            <Setter Property="Margin" Value="0,8,8,8"/>
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="TextAlignment" Value="Center"/>
         </Style>
         <Style TargetType="Button">
-            <Setter Property="Width" Value="40"/>
+            <Setter Property="MaxWidth" Value="200"/>
             <Setter Property="Height" Value="40"/>
-            <Setter Property="Height" Value="40"/>
+            <Setter Property="Margin" Value="0,8,8,8"/>
+            <Setter Property="Padding" Value="10,5"/>
         </Style>
     </Window.Resources>
-    <DockPanel>
-        <Button Command="{Binding AddTab}">+</Button>
-        
-        <TabControl ItemsSource="{Binding TabModels}" SelectedItem ="{Binding SelectedTab}">
+    <DockPanel Margin="10,10,18,18">
+
+        <Button Command="{Binding AddTab}" Margin="0,0,0,350">+</Button>
+        <TabControl  x:Name="MainTabControl" ItemsSource="{Binding TabModels}" SelectedItem ="{Binding SelectedTab}">
             <TabControl.Template>
                 <ControlTemplate TargetType="TabControl">
                     <Grid>
-                        
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        
+
                         <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Auto">
                             <TabPanel x:Name="HeaderPanel" IsItemsHost="True"/>
                         </ScrollViewer>
-                        
-                        <ContentPresenter Grid.Row="1" ContentSource="SelectedContent"/>  
+
+                        <ContentPresenter Grid.Row="1" ContentSource="SelectedContent"/>
                     </Grid>
                 </ControlTemplate>
             </TabControl.Template>
-            
+
             <TabControl.ItemTemplate>
                 <DataTemplate>
-                    <TextBlock Text="{Binding Title,UpdateSourceTrigger=PropertyChanged}">
-                    </TextBlock>
+                    <Border Padding="12,6" 
+                            Background="Transparent"
+                            PreviewMouseLeftButtonDown="TabHeader_PreviewMouseLeftButtonDown"
+                            PreviewMouseMove="TabHeader_PreviewMouseMove"
+                            PreviewMouseLeftButtonUp="TabHeader_PreviewMouseLeftButtonUp"
+                            AllowDrop="True"
+                            DragOver="TabHeader_DragOver"
+                            DragLeave="TabHeader_DragLeave"
+                            Drop="TabHeader_Drop">
+                        <TextBlock Text="{Binding Title}" Foreground="{Binding HeaderColor}"/>
+                    </Border>
                 </DataTemplate>
             </TabControl.ItemTemplate>
-            
+
+
             <TabControl.ContentTemplate>
                 <DataTemplate>
                     <DockPanel>
-                        <StackPanel DockPanel.Dock="Top" Orientation="Vertical">
-                            <Button Command="{Binding Path=DataContext.RemoveTab, 
-                                    RelativeSource={RelativeSource AncestorType=TabControl}}"
-                                CommandParameter="{Binding}">Удалить</Button>       
+                        <StackPanel DockPanel.Dock="Top" Orientation="Vertical"  Margin="0,0,0,10">
+                            <Button Content="Переименовать" 
+                                    Command="{Binding DataContext.RenameTab, ElementName=MainTabControl}"
+                                    CommandParameter="{Binding}"/>
+                            <Button Content="Удалить"
+                                    Command="{Binding DataContext.RemoveTab, ElementName=MainTabControl}"
+                                    CommandParameter="{Binding}"/>
+                            <Button Content="Удалить с задержкой"
+                                    Command="{Binding DataContext.RemoveTabAwait, ElementName=MainTabControl}"
+                                    CommandParameter="{Binding}"
+                                    IsEnabled="{Binding IsDeleting, Converter={StaticResource InverseBooleanConverter}}"/>
+                            <Button Content="{Binding CancelButtonText}"
+                                    Command="{Binding DataContext.CancelDelayedDelete, ElementName=MainTabControl}"
+                                    CommandParameter="{Binding}"
+                                    Visibility="{Binding IsDeleting, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                             <TextBox Text="{Binding TextContent,UpdateSourceTrigger=PropertyChanged}"></TextBox>
                         </StackPanel>
                     </DockPanel>
                 </DataTemplate>
             </TabControl.ContentTemplate>
-            
         </TabControl>
     </DockPanel>
 </Window>

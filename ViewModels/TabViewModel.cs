@@ -2,84 +2,36 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using System.Security.Policy;
 using TestExample.Commands;
 using TestExample.Models;
+using System.Windows;
+using TestExample.Views;
+using System.Threading.Tasks;
+using System.Threading;
+using System.Collections.Concurrent;
+using System.Linq;
+using System.Windows.Input;
 
 namespace TestExample.ViewModels
 {
-    public class TabViewModel:INotifyPropertyChanged
+    public class TabViewModel : INotifyPropertyChanged
     {
         private TabModel _selectedTab;
         public ObservableCollection<TabModel> TabModels { get; set; }
-       
-        private RelayCommand addTab;
-        public RelayCommand AddTab
-        {
-            get{
-                return addTab ??
-                    (addTab = new RelayCommand(obj =>
-                    {
-                        int index = TabModels.Count + 1;
-                        TabModel tabModel = new TabModel(index, "",true);
-                        TabModels.Add(tabModel);
-                        SelectedTab = tabModel;
-                    }));
-            }
-        }
-        private RelayCommand moveTab;
-        public RelayCommand MoveTab
-        {
-            get {
-                return moveTab ?? 
-                    (moveTab=new RelayCommand(obj=>
-                    {
-                        if (obj is Tuple<TabModel, TabModel> payload)
-                        { 
-                            var (startTab, endTab) = payload;
-                            int startIndex=TabModels.IndexOf(startTab);
-                            int endIndex=TabModels.IndexOf(endTab);
-                            if (startIndex >=0 && endIndex >=0 && startIndex != endIndex)
-                            { 
-                                int insertIndex= endIndex>startIndex?endIndex-1:endIndex;
-                                TabModels.Move(startIndex, insertIndex);
-                                SelectedTab = startTab; 
-                            }
-                        }
-                    },obj=>obj is Tuple<TabModel,TabModel>));
-            }
-        }
-        //private RelayCommand removeTab;
-        //public RelayCommand RemoveTab
-        //{
-        //    get
-        //    {
-        //        return removeTab ??
-        //          (removeTab = new RelayCommand(obj =>
-        //          {
-        //              TabModel tabModel = obj as TabModel;
-        //              if (tabModel != null )
-        //              {
-        //                  TabModels.Remove(tabModel);
-        //              }
-        //          },
-        //         (obj) => TabModels.Count > 0));
-        //    }
-        //}
-        private RelayCommand _removeTab;
-        public RelayCommand RemoveTab => _removeTab ?? new RelayCommand(obj =>
-        {
-            if (obj is TabModel tab && TabModels.Contains(tab))
-            {
-                int idx = TabModels.IndexOf(tab);
-                TabModels.Remove(tab);
+        private TabModel _draggedTab;
 
-                if (TabModels.Count > 0)
-                {
-                    SelectedTab = TabModels[Math.Min(idx, TabModels.Count - 1)];
-                }
-            }
-        }, _ => TabModels.Count > 0);
+        private readonly ConcurrentDictionary<TabModel, CancellationTokenSource> _pendingDeletions =
+            new ConcurrentDictionary<TabModel, CancellationTokenSource>();
+
+        private RelayCommand _addTab;
+        private RelayCommand _removeTab;
+        private RelayCommand _removeTabAwait;
+        private RelayCommand _cancelDelayedDelete;
+        private RelayCommand _renameTab;
+        private RelayCommand _startDragCommand;
+        private RelayCommand _cancelDragCommand;
+        private RelayCommand _moveTabCommand;
+
         public TabModel SelectedTab
         {
             get { return _selectedTab; }
@@ -88,25 +40,288 @@ namespace TestExample.ViewModels
                 if (_selectedTab != value)
                 {
                     _selectedTab = value;
-                    OnPropertyChanged("SelectedTab");
+                    OnPropertyChanged(nameof(SelectedTab));
                 }
             }
         }
+
         public TabViewModel()
         {
             TabModels = new ObservableCollection<TabModel>
             {
-                new TabModel{ Title="Вкладка 1", TextContent="Содержимое текстбокса 1" },
-                new TabModel{ Title="Вкладка 2", TextContent="Содержимое текстбокса 2" }
+                new TabModel { Title = "Вкладка 1", TextContent = "Содержимое текстбокса 1" },
+                new TabModel { Title = "Вкладка 2", TextContent = "Содержимое текстбокса 2" }
             };
             SelectedTab = TabModels[0];
         }
+        public RelayCommand AddTab
+        {
+            get
+            {
+                if (_addTab == null)
+                {
+                    _addTab = new RelayCommand(obj =>
+                    {
+                        int index = TabModels.Count + 1;
+                        var tabModel = new TabModel(index, "", true);
+                        TabModels.Add(tabModel);
+                        SelectedTab = tabModel;
+                    });
+                }
+                return _addTab;
+            }
+        }
+
+        public RelayCommand RemoveTab
+        {
+            get
+            {
+                if (_removeTab == null)
+                {
+                    _removeTab = new RelayCommand(
+                        execute: obj =>
+                        {
+                            if (obj is TabModel tab && TabModels.Contains(tab))
+                            {
+                                if (_pendingDeletions.TryGetValue(tab, out var cts))
+                                {
+                                    cts.Cancel();
+                                }
+
+                                int index = TabModels.IndexOf(tab);
+                                TabModels.Remove(tab);
+
+                                if (TabModels.Count > 0)
+                                    SelectedTab = TabModels[Math.Min(index, TabModels.Count - 1)];
+                            }
+                        },
+                        canExecute: _ => TabModels.Count > 0
+                    );
+                }
+                return _removeTab;
+            }
+        }
+
+        public RelayCommand RemoveTabAwait
+        {
+            get
+            {
+                if (_removeTabAwait == null)
+                {
+                    _removeTabAwait = new RelayCommand(
+                        execute: obj =>
+                        {
+                            if (obj is TabModel tab && TabModels.Contains(tab) && !tab.IsDeleting)
+                            {
+                                StartDelayedRemovalAsync(tab);
+                            }
+                        },
+                        canExecute: obj => obj is TabModel tab && TabModels.Contains(tab) && !tab.IsDeleting
+                    );
+                }
+                return _removeTabAwait;
+            }
+        }
+
+        public RelayCommand CancelDelayedDelete
+        {
+            get
+            {
+                if (_cancelDelayedDelete == null)
+                {
+                    _cancelDelayedDelete = new RelayCommand(
+                        execute: obj =>
+                        {
+                            if (obj is TabModel tab && _pendingDeletions.TryGetValue(tab, out var cts))
+                            {
+                                cts.Cancel();
+                            }
+                        },
+                        canExecute: obj => obj is TabModel tab && tab.IsDeleting
+                    );
+                }
+                return _cancelDelayedDelete;
+            }
+        }
+
+        public RelayCommand RenameTab
+        {
+            get
+            {
+                if (_renameTab == null)
+                {
+                    _renameTab = new RelayCommand(
+                        execute: obj =>
+                        {
+                            if (obj is TabModel tab)
+                            {
+                                Application.Current.Dispatcher.Invoke(() =>
+                                {
+                                    var dialog = new RenameDialog(tab.Title);
+                                    bool? result = dialog.ShowDialog();
+
+                                    if (result == true && !string.IsNullOrWhiteSpace(dialog.NewTitle))
+                                    {
+                                        tab.Title = dialog.NewTitle;
+                                    }
+                                });
+                            }
+                        },
+                        canExecute: obj => obj is TabModel && TabModels.Count > 0
+                    );
+                }
+                return _renameTab;
+            }
+        }
+
+        public RelayCommand StartDragCommand
+        {
+            get
+            {
+                if (_startDragCommand == null)
+                {
+                    _startDragCommand = new RelayCommand(obj =>
+                    {
+                        if (obj is TabModel tab)
+                        {
+                            _draggedTab = tab;
+                        }
+                    });
+                }
+                return _startDragCommand;
+            }
+        }
+
+        public RelayCommand MoveTabCommand
+        {
+            get
+            {
+                if (_moveTabCommand == null)
+                {
+                    _moveTabCommand = new RelayCommand(
+                        execute: obj =>
+                        {
+                            if (obj is TabModel targetTab && _draggedTab != null && _draggedTab != targetTab)
+                            {
+                                int startIndex = TabModels.IndexOf(_draggedTab);
+                                int endIndex = TabModels.IndexOf(targetTab);
+
+                                if (startIndex >= 0 && endIndex >= 0 && startIndex != endIndex)
+                                {
+                                    int insertIndex = endIndex > startIndex ? endIndex - 1 : endIndex;
+                                    TabModels.Move(startIndex, insertIndex);
+                                    SelectedTab = _draggedTab;
+                                }
+
+                                _draggedTab = null;
+                            }
+                        },
+                        canExecute: obj => obj is TabModel tab && _draggedTab != null && _draggedTab != tab
+                    );
+                }
+                return _moveTabCommand;
+            }
+        }
+
+        public RelayCommand CancelDragCommand
+        {
+            get
+            {
+                if (_cancelDragCommand == null)
+                {
+                    _cancelDragCommand = new RelayCommand(_ =>
+                    {
+                        _draggedTab = null;
+                    });
+                }
+                return _cancelDragCommand;
+            }
+        }
+
+        private async void StartDelayedRemovalAsync(TabModel tab)
+        {
+            var cts = new CancellationTokenSource();
+
+            if (!_pendingDeletions.TryAdd(tab, cts))
+            {
+                cts.Dispose();
+                return;
+            }
+
+            tab.IsDeleting = true;
+            tab.RemainingSeconds = 5;
+
+            try
+            {
+                await Task.Run(async () =>
+                {
+                    for (int i = 5; i > 0; i--)
+                    {
+                        if (cts.Token.IsCancellationRequested)
+                            break;
+
+                        await Application.Current.Dispatcher.InvokeAsync(() =>
+                        {
+                            if (TabModels.Contains(tab))
+                                tab.RemainingSeconds = i;
+                        });
+
+                        try
+                        {
+                            await Task.Delay(1000, cts.Token);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
+                        }
+                    }
+                }, cts.Token);
+
+                if (!cts.Token.IsCancellationRequested && TabModels.Contains(tab))
+                {
+                    await Application.Current.Dispatcher.InvokeAsync(() =>
+                    {
+                        int index = TabModels.IndexOf(tab);
+                        TabModels.Remove(tab);
+                        if (TabModels.Count > 0)
+                            SelectedTab = TabModels[Math.Min(index, TabModels.Count - 1)];
+                    });
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    if (TabModels.Contains(tab))
+                    {
+                        tab.IsDeleting = false;
+                        tab.RemainingSeconds = 0;
+                    }
+                });
+
+                if (_pendingDeletions.TryRemove(tab, out var removedCts))
+                {
+                    removedCts.Dispose();
+                }
+            }
+        }
+
+        public void CancelAllPendingDeletions()
+        {
+            foreach (var kvp in _pendingDeletions.ToArray())
+            {
+                kvp.Value.Cancel();  
+            }
+        }
 
         public event PropertyChangedEventHandler PropertyChanged;
-        public void OnPropertyChanged([CallerMemberName]string prop="") {
-            if (PropertyChanged != null) { 
-                PropertyChanged(this, new PropertyChangedEventArgs(prop));
-            }
+
+        protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
     }
 }

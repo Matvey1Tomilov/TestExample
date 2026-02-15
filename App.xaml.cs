@@ -5,6 +5,8 @@ using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+ using TestExample.ViewModels;
+ using TestExample.Views;
 
 namespace TestExample
 {

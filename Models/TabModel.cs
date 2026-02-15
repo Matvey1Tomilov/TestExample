@@ -8,6 +8,8 @@ namespace TestExample.Models
     {
         private string _title;
         private string _textContent;
+        private bool _isDeleting;
+        private int _remainingSeconds;
         public TabModel()
         {
             _title = Title ;
@@ -33,7 +35,31 @@ namespace TestExample.Models
                 _textContent = value;
                 OnPropertyChanged("TextContent");
             }
+        }    
+
+        public bool IsDeleting
+        {
+            get => _isDeleting;
+            set
+            {
+                _isDeleting = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HeaderColor)); 
+            }
         }
+
+        public int RemainingSeconds
+        {
+            get => _remainingSeconds;
+            set
+            {
+                _remainingSeconds = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(CancelButtonText));
+            }
+        }
+        public string CancelButtonText => IsDeleting ? $"Отменить ({RemainingSeconds}с)" : "Отменить";
+        public string HeaderColor => IsDeleting ? "Red" : "Black";
 
         public event PropertyChangedEventHandler PropertyChanged;
         public void OnPropertyChanged([CallerMemberName]string prop="") {
